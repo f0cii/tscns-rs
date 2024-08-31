@@ -6,7 +6,7 @@ pub struct TscTime;
 
 impl TscTime {
     pub fn now(&self) -> u64 {
-        tscns::read_nanos() as u64
+        tscns::read_nanos()
     }
 }
 
