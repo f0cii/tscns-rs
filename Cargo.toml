@@ -1,0 +1,21 @@
+[package]
+name = "tscns"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+crossbeam-utils = "0.8.20"
+
+[dev-dependencies]
+criterion = { version = "0.5.1", default-features = true }
+chrono = "0.4.38"
+
+[[example]]
+name = "tsc_example"
+
+[[bench]]
+name = "benches"
+path = "benches/benches.rs"
+harness = false
