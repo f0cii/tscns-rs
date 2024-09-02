@@ -1,5 +1,3 @@
-#![allow(arithmetic_overflow)]
-
 extern crate crossbeam_utils;
 
 use std::ptr::addr_of_mut;
@@ -7,42 +5,42 @@ use crossbeam_utils::CachePadded;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime};
 
-/// [`NS_PER_SEC`] The number of nanoseconds per second, which is equal to one billion nanoseconds per second.
-const NS_PER_SEC: u64 = 1_000_000_000;
+/// [`NS_PER_SEC`]  The number of nanoseconds in each second is equal to one billion nanoseconds.
+const NS_PER_SEC: i64 = 1_000_000_000;
 
-/// [`INIT_CALIBRATE_NANOS`] Default initial calibration sampling time interval is 20ms
-pub const INIT_CALIBRATE_NANOS: u64 = 20000000;
+/// [`INIT_CALIBRATE_NANOS`] The default initial calibration sampling time interval is 20 milliseconds.
+pub const INIT_CALIBRATE_NANOS: i64 = 20000000;
 
-/// [`CALIBRATE_INTERVAL_NANOS`] Default clock calibration period 3s
-pub const CALIBRATE_INTERVAL_NANOS: u64 = 3 * NS_PER_SEC;
+/// [`CALIBRATE_INTERVAL_NANOS`] The default clock calibration period is 3 seconds.
+pub const CALIBRATE_INTERVAL_NANOS: i64 = 3 * NS_PER_SEC;
 
-/// [`PARAM_SEQ`] The global optimistic lock is used to detect whether global parameters have changed or whether the global state (such as BASE_NS, BASE_TSC, NS_PER_TSC) has been modified by other threads during the calculation process.
+/// [`PARAM_SEQ`] Global optimistic lock, used to detect whether global parameters have changed or whether global state (such as BASE_NS, BASE_TSC, NS_PER_TSC) has been modified by other threads during the calculation process.
 static mut PARAM_SEQ: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
 
-/// [`NS_PER_TSC`] Represents the number of nanoseconds for each clock cycle (Time Stamp Counter), that is, the number of nanoseconds per clock cycle.
+/// [`NS_PER_TSC`] Indicates the number of nanoseconds per clock cycle.
 static mut NS_PER_TSC: f64 = 0.0;
 
-/// [`BASE_TSC`] Baseline TSC timestamp, ((current TSC timestamp - BASE_TSC) NS_PER_TSC) is the number of nanoseconds per clock cycle.
-static mut BASE_TSC: u64 = 0;
+/// [`BASE_TSC`] Benchmark TSC timestamp, used to calculate relative time.
+static mut BASE_TSC: i64 = 0;
 
-/// [`BASE_NS`] Baseline nanosecond
-static mut BASE_NS: u64 = 0;
+/// [`BASE_NS`] Benchmark nanosecond error, used to reduce the error between TSC timestamp and nanosecond timestamp conversion.
+static mut BASE_NS: i64 = 0;
 
 /// [`CALIBATE_INTERVAL_NS`] Calibrate Clock Cycle
-static mut CALIBATE_INTERVAL_NS: u64 = 0;
+static mut CALIBATE_INTERVAL_NS: i64 = 0;
 
 /// [`BASE_NS_ERR`] Benchmark nanosecond error, used to reduce the error between TSC timestamp and nanosecond timestamp conversion.
-static mut BASE_NS_ERR: u64 = 0;
+static mut BASE_NS_ERR: i64 = 0;
 
-/// [`NEXT_CALIBRATE_TSC`] In the next clock cycle, used to determine whether a clock calibration is necessary.
-static mut NEXT_CALIBRATE_TSC: u64 = 0;
+/// [`NEXT_CALIBRATE_TSC`]  The TSC timestamp for the next clock calibration is used to determine whether clock calibration is necessary.
+static mut NEXT_CALIBRATE_TSC: i64 = 0;
 
 
 /// # Examples
 /// ```
 /// tscns::init(tscns::INIT_CALIBRATE_NANOS, tscns::CALIBRATE_INTERVAL_NANOS);
 /// ```
-pub fn init(init_calibrate_ns: u64, calibrate_interval_ns: u64) {
+pub fn init(init_calibrate_ns: i64, calibrate_interval_ns: i64) {
     unsafe {
         *addr_of_mut!(CALIBATE_INTERVAL_NS) = calibrate_interval_ns;
 
@@ -71,7 +69,7 @@ pub fn init(init_calibrate_ns: u64, calibrate_interval_ns: u64) {
 /// ```
 #[inline(always)]
 pub fn read_nanos() -> u64 {
-    tsc2ns(read_tsc())
+    tsc2ns(read_tsc()) as u64
 }
 
 
@@ -95,7 +93,11 @@ pub fn calibrate() {
     }
     let (tsc, ns) = sync_time();
     let calculated_ns = tsc2ns(tsc);
-    let ns_err = calculated_ns - ns;    // Calculate the error in converting the current TSC timestamp to a nanosecond timestamp.
+    // Calculate the error in converting the current TSC timestamp to a nanosecond timestamp.
+    // If `ns_err` is a negative value, it indicates that the time converted by TSC is "slower" than the actual system time.
+    // When `ns_err` is a negative value, it will cause NS_PER_TSC to increase. This means that we need to increase the number of
+    // nanoseconds corresponding to each TSC cycle to catch up with the actual system time.
+    let ns_err = calculated_ns - ns;
     let expected_err_at_next_calibration = ns_err + (ns_err - unsafe { BASE_NS_ERR }) * unsafe { CALIBATE_INTERVAL_NS } / (ns - unsafe { BASE_NS } + unsafe { BASE_NS_ERR });
     let new_ns_per_tsc = unsafe { NS_PER_TSC } * (1.0 - (expected_err_at_next_calibration as f64) / unsafe { CALIBATE_INTERVAL_NS } as f64);    // Calculate the number of nanoseconds for each new clock cycle.
     save_param(tsc, calculated_ns, ns, new_ns_per_tsc);
@@ -115,7 +117,7 @@ pub fn get_tsc_ghz() -> f64 {
 
 
 /// Convert tsc timestamp to nanosecond timestamp
-fn tsc2ns(tsc: u64) -> u64 {
+fn tsc2ns(tsc: i64) -> i64 {
     loop {
         let before_seq = unsafe {
             let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
@@ -124,7 +126,7 @@ fn tsc2ns(tsc: u64) -> u64 {
         std::sync::atomic::fence(Ordering::AcqRel);
         // Calculate the TSC interval from the baseline time to the current time point and convert it into nanoseconds.
         // Add the initial baseline nanoseconds to the interval nanoseconds to obtain the current nanoseconds.
-        let ns = unsafe { BASE_NS } + ((tsc - unsafe { BASE_TSC }) as f64 * unsafe { NS_PER_TSC }) as u64;
+        let ns = unsafe { BASE_NS } + ((tsc - unsafe { BASE_TSC }) as f64 * unsafe { NS_PER_TSC }) as i64;
         std::sync::atomic::fence(Ordering::AcqRel);
         let after_seq = unsafe {
             let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
@@ -137,25 +139,25 @@ fn tsc2ns(tsc: u64) -> u64 {
 }
 
 /// Get the current system nanosecond timestamp.
-fn read_sys_nanos() -> u64 {
+fn read_sys_nanos() -> i64 {
     let now = SystemTime::now();
     let result = now.duration_since(SystemTime::UNIX_EPOCH);
     match result {
-        Ok(duration) => duration.as_nanos() as u64,
+        Ok(duration) => duration.as_nanos() as i64,
         Err(_) => 0,
     }
 }
 
 /// Update static global variables inside the module
 fn save_param(
-    base_tsc: u64,
-    base_ns: u64,
-    sys_ns: u64,
+    base_tsc: i64,
+    base_ns: i64,
+    sys_ns: i64,
     new_ns_per_tsc: f64,
 ) {
     unsafe {
-        *addr_of_mut!(BASE_NS) = base_ns - sys_ns; // Error in calculating benchmark nanoseconds.
-        *addr_of_mut!(NEXT_CALIBRATE_TSC) = base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as u64; // Calculate the clock cycle for the next calibration.
+        *addr_of_mut!(BASE_NS) = base_ns - sys_ns; // Compute benchmark nanosecond error.
+        *addr_of_mut!(NEXT_CALIBRATE_TSC) = base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as i64; // Calculate the clock cycle for the next calibration.
         let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
         let seq = param_seq_ref.load(Ordering::Relaxed);
         let param_seq = &mut *addr_of_mut!(PARAM_SEQ);
@@ -173,11 +175,11 @@ fn save_param(
 }
 
 /// Internal function to synchronize the tsc and system time
-fn sync_time() -> (u64, u64) {
+fn sync_time() -> (i64, i64) {
     const N: usize = if cfg!(windows) { 15 } else { 3 };
 
-    let mut tsc: [u64; N + 1] = [0; N + 1];
-    let mut ns: [u64; N + 1] = [0; N + 1];
+    let mut tsc: [i64; N + 1] = [0; N + 1];
+    let mut ns: [i64; N + 1] = [0; N + 1];
 
     tsc[0] = read_tsc();
     for i in 1..=N {    // Get Sampling
@@ -218,19 +220,19 @@ fn sync_time() -> (u64, u64) {
 
 /// Read tsc count, support x86_64 and aarch64 architecture cpu
 #[inline(always)]
-fn read_tsc() -> u64 {
+fn read_tsc() -> i64 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::x86_64::_rdtsc()
     }
     #[cfg(target_arch = "x86")]
     unsafe {
-        std::arch::x86::_rdtsc() as u64
+        std::arch::x86::_rdtsc() as i64
     }
 
     #[cfg(target_arch = "aarch64")]
     {
-        let tsc: u64;
+        let tsc: i64;
         unsafe {
             std::arch::asm!("mrs {}, cntvct_el0", out(reg) tsc);
         }
@@ -239,7 +241,7 @@ fn read_tsc() -> u64 {
 
     #[cfg(target_arch = "riscv64")]
     {
-        let tsc: u64;
+        let tsc: i64;
         unsafe {
             asm!("rdtime {}", out(reg) tsc);
         }
