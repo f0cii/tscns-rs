@@ -10,7 +10,7 @@ fn bench_tsc_avg(c: &mut Criterion) {
     std::thread::spawn(move || {
         while thread_running.load(std::sync::atomic::Ordering::Acquire) {
             tscns::calibrate();
-            std::thread::sleep(std::time::Duration::from_nanos(tscns::CALIBRATE_INTERVAL_NANOS));
+            std::thread::sleep(std::time::Duration::from_nanos(tscns::CALIBRATE_INTERVAL_NANOS as u64));
         }
     });
 

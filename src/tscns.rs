@@ -223,7 +223,7 @@ fn sync_time() -> (i64, i64) {
 fn read_tsc() -> i64 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        std::arch::x86_64::_rdtsc()
+        std::arch::x86_64::_rdtsc() as i64
     }
     #[cfg(target_arch = "x86")]
     unsafe {
