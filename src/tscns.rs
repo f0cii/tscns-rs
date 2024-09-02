@@ -1,3 +1,5 @@
+#![allow(arithmetic_overflow)]
+
 extern crate crossbeam_utils;
 
 use std::ptr::addr_of_mut;
@@ -93,8 +95,7 @@ pub fn calibrate() {
     }
     let (tsc, ns) = sync_time();
     let calculated_ns = tsc2ns(tsc);
-    let ns_err = calculated_ns.checked_sub(ns).unwrap_or_else(|| 0);
-    // let ns_err = (calculated_ns - ns);    // Calculate the error in converting the current TSC timestamp to a nanosecond timestamp.
+    let ns_err = calculated_ns - ns;    // Calculate the error in converting the current TSC timestamp to a nanosecond timestamp.
     let expected_err_at_next_calibration = ns_err + (ns_err - unsafe { BASE_NS_ERR }) * unsafe { CALIBATE_INTERVAL_NS } / (ns - unsafe { BASE_NS } + unsafe { BASE_NS_ERR });
     let new_ns_per_tsc = unsafe { NS_PER_TSC } * (1.0 - (expected_err_at_next_calibration as f64) / unsafe { CALIBATE_INTERVAL_NS } as f64);    // Calculate the number of nanoseconds for each new clock cycle.
     save_param(tsc, calculated_ns, ns, new_ns_per_tsc);
@@ -153,8 +154,7 @@ fn save_param(
     new_ns_per_tsc: f64,
 ) {
     unsafe {
-        *addr_of_mut!(BASE_NS) = base_ns.checked_sub(sys_ns).unwrap_or_else(|| 0);
-        // *addr_of_mut!(BASE_NS) = base_ns - sys_ns; // Error in calculating benchmark nanoseconds.
+        *addr_of_mut!(BASE_NS) = base_ns - sys_ns; // Error in calculating benchmark nanoseconds.
         *addr_of_mut!(NEXT_CALIBRATE_TSC) = base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as u64; // Calculate the clock cycle for the next calibration.
         let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
         let seq = param_seq_ref.load(Ordering::Relaxed);
