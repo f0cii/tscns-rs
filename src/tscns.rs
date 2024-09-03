@@ -1,21 +1,21 @@
-extern crate crossbeam_utils;
-
 use std::ptr::addr_of_mut;
-use crossbeam_utils::CachePadded;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime};
 
 /// [`NS_PER_SEC`]  The number of nanoseconds in each second is equal to one billion nanoseconds.
 const NS_PER_SEC: i64 = 1_000_000_000;
 
-/// [`INIT_CALIBRATE_NANOS`] The default initial calibration sampling time interval is 20 milliseconds.
-pub const INIT_CALIBRATE_NANOS: i64 = 20000000;
+/// [`INIT_CALIBRATE_NANOS`] The default initial calibration sampling duration is 300 milliseconds.
+pub const INIT_CALIBRATE_NANOS: i64 = 300000000;
 
 /// [`CALIBRATE_INTERVAL_NANOS`] The default clock calibration period is 3 seconds.
 pub const CALIBRATE_INTERVAL_NANOS: i64 = 3 * NS_PER_SEC;
 
 /// [`PARAM_SEQ`] Global optimistic lock, used to detect whether global parameters have changed or whether global state (such as BASE_NS, BASE_TSC, NS_PER_TSC) has been modified by other threads during the calculation process.
-static mut PARAM_SEQ: CachePadded<AtomicUsize> = CachePadded::new(AtomicUsize::new(0));
+
+#[repr(align(64))]
+struct Sequence(AtomicUsize);
+static mut PARAM_SEQ: Sequence = Sequence(AtomicUsize::new(0));
 
 /// [`NS_PER_TSC`] Indicates the number of nanoseconds per clock cycle.
 static mut NS_PER_TSC: f64 = 0.0;
@@ -117,11 +117,11 @@ pub fn get_tsc_ghz() -> f64 {
 
 
 /// Convert tsc timestamp to nanosecond timestamp
-fn tsc2ns(tsc: i64) -> i64 {
+pub fn tsc2ns(tsc: i64) -> i64 {
     loop {
         let before_seq = unsafe {
             let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-            param_seq_ref.load(Ordering::Acquire) & !1
+            param_seq_ref.0.load(Ordering::Acquire) & !1
         };
         std::sync::atomic::fence(Ordering::AcqRel);
         // Calculate the TSC interval from the baseline time to the current time point and convert it into nanoseconds.
@@ -130,7 +130,7 @@ fn tsc2ns(tsc: i64) -> i64 {
         std::sync::atomic::fence(Ordering::AcqRel);
         let after_seq = unsafe {
             let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-            param_seq_ref.load(Ordering::Acquire)
+            param_seq_ref.0.load(Ordering::Acquire)
         };
         if before_seq == after_seq {
             return ns;
@@ -159,9 +159,9 @@ fn save_param(
         *addr_of_mut!(BASE_NS) = base_ns - sys_ns; // Compute benchmark nanosecond error.
         *addr_of_mut!(NEXT_CALIBRATE_TSC) = base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as i64; // Calculate the clock cycle for the next calibration.
         let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-        let seq = param_seq_ref.load(Ordering::Relaxed);
+        let seq = param_seq_ref.0.load(Ordering::Relaxed);
         let param_seq = &mut *addr_of_mut!(PARAM_SEQ);
-        param_seq.store(seq + 1, Ordering::Release);
+        param_seq.0.store(seq + 1, Ordering::Release);
 
         std::sync::atomic::fence(Ordering::AcqRel); // Atomic barrier separation ensures that all read and write operations executed before the atomic barrier are completed.
         *addr_of_mut!(BASE_TSC) = base_tsc;
@@ -170,7 +170,7 @@ fn save_param(
         std::sync::atomic::fence(Ordering::AcqRel);
 
         let param_seq_ref = &mut *addr_of_mut!(PARAM_SEQ);
-        param_seq_ref.store(seq + 2, Ordering::Release);
+        param_seq_ref.0.store(seq + 2, Ordering::Release);
     }
 }
 
