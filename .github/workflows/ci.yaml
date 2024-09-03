@@ -22,7 +22,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
+      - name: Build example
+        run: cargo build -r --example=tsc_example --verbose
       - name: Run tests
         run: cargo test --verbose
       - name: Run bench
         run: cargo +nightly bench --verbose
+      - name: Run example
+        run: ./target/release/examples/tsc_example

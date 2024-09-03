@@ -68,8 +68,8 @@ pub fn init(init_calibrate_ns: i64, calibrate_interval_ns: i64) {
 /// println!("now ns: {}", ns);
 /// ```
 #[inline(always)]
-pub fn read_nanos() -> u64 {
-    tsc2ns(read_tsc()) as u64
+pub fn read_nanos() -> i64 {
+    tsc2ns(read_tsc())
 }
 
 
@@ -220,7 +220,7 @@ fn sync_time() -> (i64, i64) {
 
 /// Read tsc count, support x86_64 and aarch64 architecture cpu
 #[inline(always)]
-fn read_tsc() -> i64 {
+pub fn read_tsc() -> i64 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         std::arch::x86_64::_rdtsc() as i64

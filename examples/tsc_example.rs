@@ -5,7 +5,7 @@ use tscns::{CALIBRATE_INTERVAL_NANOS, INIT_CALIBRATE_NANOS};
 pub struct TscTime;
 
 impl TscTime {
-    pub fn now(&self) -> u64 {
+    pub fn now(&self) -> i64 {
         tscns::read_nanos()
     }
 }
