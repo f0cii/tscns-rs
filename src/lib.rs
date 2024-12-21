@@ -1,3 +1,6 @@
+#![allow(internal_features)]
+#![feature(core_intrinsics)]
+
 mod tscns;
 
 pub use tscns::{

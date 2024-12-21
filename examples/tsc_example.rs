@@ -1,7 +1,6 @@
 use std::time::Duration;
 use tscns::{CALIBRATE_INTERVAL_NANOS, INIT_CALIBRATE_NANOS};
 
-
 pub struct TscTime;
 
 impl TscTime {
@@ -43,7 +42,6 @@ fn main() {
         std::thread::sleep(Duration::from_nanos(tscns::CALIBRATE_INTERVAL_NANOS as u64));
     });
 
-
     let micros = (tscns::read_nanos() as f64 * 1e-3) as i64;
     let us = micros as f64 % 1000000_f64;
     let sys_time = std::time::UNIX_EPOCH + Duration::from_micros(micros as u64);
@@ -64,4 +62,6 @@ fn main() {
     //     let _ns = tscns::read_nanos();
     //     println!("now ns: {}", _ns);
     // }
+
+    println!("cpu {} GHz", tscns::get_tsc_ghz());
 }
