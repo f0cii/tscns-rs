@@ -1,5 +1,5 @@
 use std::intrinsics::{unchecked_add, unchecked_sub};
-use std::ptr::addr_of_mut;
+use std::ptr::{addr_of, addr_of_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
 
@@ -15,7 +15,21 @@ pub const CALIBRATE_INTERVAL_NANOS: i64 = 3 * NS_PER_SEC;
 /// [`PARAM_SEQ`] Global optimistic lock, used to detect whether global parameters have changed or whether global state (such as BASE_NS, BASE_TSC, NS_PER_TSC) has been modified by other threads during the calculation process.
 #[repr(align(64))]
 struct Sequence(AtomicUsize);
-static mut PARAM_SEQ: Sequence = Sequence(AtomicUsize::new(0));
+
+impl Sequence {
+    pub(crate) const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+    pub(crate) fn read(&self, order: Ordering) -> usize {
+        self.0.load(order)
+    }
+
+    pub(crate) fn write(&self, val: usize, order: Ordering) {
+        self.0.store(val, order);
+    }
+}
+
+static mut PARAM_SEQ: Sequence = const { Sequence::new() };
 
 /// [`NS_PER_TSC`] Indicates the number of nanoseconds per clock cycle.
 static mut NS_PER_TSC: f64 = 0.0;
@@ -41,7 +55,7 @@ static mut NEXT_CALIBRATE_TSC: i64 = 0;
 /// ```
 pub fn init(init_calibrate_ns: i64, calibrate_interval_ns: i64) {
     unsafe {
-        *addr_of_mut!(CALIBATE_INTERVAL_NS) = calibrate_interval_ns;
+        addr_of_mut!(CALIBATE_INTERVAL_NS).write_volatile(calibrate_interval_ns);
         let (base_tsc, base_ns) = sync_time();
         let expire_ns = unchecked_add(base_ns, init_calibrate_ns);
         while read_sys_nanos() < expire_ns {
@@ -84,7 +98,7 @@ pub fn read_nanos() -> i64 {
 /// });
 /// ```
 pub fn calibrate() {
-    if read_tsc() < (unsafe { NEXT_CALIBRATE_TSC }) {
+    if read_tsc() < (unsafe { addr_of!(NEXT_CALIBRATE_TSC).read_volatile() }) {
         // The current time should be beyond the next calibration time.
         return;
     }
@@ -97,11 +111,17 @@ pub fn calibrate() {
     unsafe {
         let ns_err = unchecked_sub(calculated_ns, ns);
         let expected_err_at_next_calibration = ns_err
-            + (unchecked_sub(ns_err, BASE_NS_ERR)) * CALIBATE_INTERVAL_NS
-                / (unchecked_add(unchecked_sub(ns, BASE_NS), BASE_NS_ERR));
+            + (unchecked_sub(ns_err, addr_of!(BASE_NS_ERR).read_volatile()))
+                * addr_of!(CALIBATE_INTERVAL_NS).read_volatile()
+                / (unchecked_add(
+                    unchecked_sub(ns, addr_of!(BASE_NS).read_volatile()),
+                    addr_of!(BASE_NS_ERR).read_volatile(),
+                ));
 
-        let new_ns_per_tsc = NS_PER_TSC
-            * (1.0 - (expected_err_at_next_calibration as f64) / CALIBATE_INTERVAL_NS as f64); // Calculate the number of nanoseconds for each new clock cycle.
+        let new_ns_per_tsc = addr_of!(NS_PER_TSC).read_volatile()
+            * (1.0
+                - (expected_err_at_next_calibration as f64)
+                    / addr_of!(CALIBATE_INTERVAL_NS).read_volatile() as f64); // Calculate the number of nanoseconds for each new clock cycle.
         save_param(tsc, calculated_ns, ns, new_ns_per_tsc);
     }
 }
@@ -115,37 +135,26 @@ pub fn calibrate() {
 /// println!("cpu {}GHz", ghz);
 /// ```
 pub fn get_tsc_ghz() -> f64 {
-    1.0 / unsafe { NS_PER_TSC }
+    1.0 / unsafe { addr_of!(NS_PER_TSC).read_volatile() }
 }
 
 /// Convert tsc timestamp to nanosecond timestamp
 pub fn tsc2ns(tsc: i64) -> i64 {
     loop {
-        let before_seq = unsafe {
-            let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-            param_seq_ref.0.load(Ordering::Acquire) & !1
-        };
+        let before_seq = unsafe { (&*addr_of_mut!(PARAM_SEQ)).read(Ordering::Acquire) & !1 };
         std::sync::atomic::fence(Ordering::AcqRel);
         // Calculate the TSC interval from the baseline time to the current time point and convert it into nanoseconds.
         // Add the initial baseline nanoseconds to the interval nanoseconds to obtain the current nanoseconds.
         let ns = unsafe {
             // BASE_NS + ((tsc - BASE_TSC) as f64 * NS_PER_TSC) as i64
-            let diff_tsc = unchecked_sub(tsc, BASE_TSC) as f64;
+            let diff_tsc = unchecked_sub(tsc, addr_of!(BASE_TSC).read_volatile()) as f64;
             // the rust bug Cannot MulUnchecked non-integer type f64
             // let diff_ns = unchecked_mul(diff_tsc, NS_PER_TSC) as i64;
-            let diff_ns = (diff_tsc * NS_PER_TSC) as i64;
-            unchecked_add(BASE_NS, diff_ns)
-
-            // unchecked_add(
-            //     BASE_NS,
-            //     unchecked_mul(unchecked_sub(tsc, BASE_TSC) as f64, NS_PER_TSC) as i64,
-            // )
+            let diff_ns = (diff_tsc * addr_of!(NS_PER_TSC).read_volatile()) as i64;
+            unchecked_add(addr_of!(BASE_NS).read_volatile(), diff_ns)
         };
         std::sync::atomic::fence(Ordering::AcqRel);
-        let after_seq = unsafe {
-            let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-            param_seq_ref.0.load(Ordering::Acquire)
-        };
+        let after_seq = unsafe { (&*addr_of_mut!(PARAM_SEQ)).read(Ordering::Acquire) };
         if before_seq == after_seq {
             return ns;
         }
@@ -165,27 +174,24 @@ fn read_sys_nanos() -> i64 {
 /// Update static global variables inside the module
 fn save_param(base_tsc: i64, base_ns: i64, sys_ns: i64, new_ns_per_tsc: f64) {
     unsafe {
-        *addr_of_mut!(BASE_NS) = unchecked_sub(base_ns, sys_ns); // Compute benchmark nanosecond error.
-        *addr_of_mut!(NEXT_CALIBRATE_TSC) =
-            // base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as i64;
-            unchecked_add(base_tsc, (unchecked_sub(CALIBATE_INTERVAL_NS, 1000) as f64 / new_ns_per_tsc) as i64);
+        addr_of_mut!(BASE_NS).write_volatile(unchecked_sub(base_ns, sys_ns)); // Compute benchmark nanosecond error.
 
-        let param_seq_ref = &*addr_of_mut!(PARAM_SEQ);
-        let seq = param_seq_ref.0.load(Ordering::Relaxed);
-        let param_seq = &mut *addr_of_mut!(PARAM_SEQ);
+        // base_tsc + ((CALIBATE_INTERVAL_NS - 1000) as f64 / new_ns_per_tsc) as i64;
+        addr_of_mut!(NEXT_CALIBRATE_TSC).write_volatile(unchecked_add(
+            base_tsc,
+            (unchecked_sub(addr_of!(CALIBATE_INTERVAL_NS).read_volatile(), 1000) as f64
+                / new_ns_per_tsc) as i64,
+        ));
 
-        param_seq.0.store(unchecked_add(seq, 1), Ordering::Release);
+        let seq = (&*addr_of!(PARAM_SEQ)).read(Ordering::Relaxed);
+        (&mut *addr_of_mut!(PARAM_SEQ)).write(unchecked_add(seq, 1), Ordering::Release);
 
         std::sync::atomic::fence(Ordering::AcqRel); // Atomic barrier separation ensures that all read and write operations executed before the atomic barrier are completed.
-        *addr_of_mut!(BASE_TSC) = base_tsc;
-        *addr_of_mut!(BASE_NS) = base_ns;
-        *addr_of_mut!(NS_PER_TSC) = new_ns_per_tsc;
+        addr_of_mut!(BASE_TSC).write_volatile(base_tsc);
+        addr_of_mut!(BASE_NS).write_volatile(base_ns);
+        addr_of_mut!(NS_PER_TSC).write_volatile(new_ns_per_tsc);
         std::sync::atomic::fence(Ordering::AcqRel);
-
-        let param_seq_ref = &mut *addr_of_mut!(PARAM_SEQ);
-        param_seq_ref
-            .0
-            .store(unchecked_add(seq, 2), Ordering::Release);
+        (&mut *addr_of_mut!(PARAM_SEQ)).write(unchecked_add(seq, 2), Ordering::Release);
     }
 }
 
