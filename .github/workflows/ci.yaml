@@ -19,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain.toml@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
       - name: Build example
