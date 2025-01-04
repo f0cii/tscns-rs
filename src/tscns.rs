@@ -1,4 +1,4 @@
-use std::intrinsics::{unchecked_add, unchecked_sub};
+//use std::intrinsics::{unchecked_add, unchecked_sub};
 use std::ptr::{addr_of, addr_of_mut};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::SystemTime;
@@ -11,6 +11,16 @@ pub const INIT_CALIBRATE_NANOS: i64 = 300000000;
 
 /// [`CALIBRATE_INTERVAL_NANOS`] The default clock calibration period is 3 seconds.
 pub const CALIBRATE_INTERVAL_NANOS: i64 = 3 * NS_PER_SEC;
+
+#[inline(always)]
+fn unchecked_add<T: std::ops::Add<Output = T> + Copy>(a: T, b: T) -> T {
+    unsafe { std::mem::transmute::<T, T>(a + b) }
+}
+
+#[inline(always)]
+fn unchecked_sub<T: std::ops::Sub<Output = T> + Copy>(a: T, b: T) -> T {
+    unsafe { std::mem::transmute::<T, T>(a - b) }
+}
 
 /// [`PARAM_SEQ`] Global optimistic lock, used to detect whether global parameters have changed or whether global state (such as BASE_NS, BASE_TSC, NS_PER_TSC) has been modified by other threads during the calculation process.
 #[repr(align(64))]
